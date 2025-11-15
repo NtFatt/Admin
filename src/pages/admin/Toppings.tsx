@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Search, Trash2, Package } from "lucide-react";
+import { Plus, Search, Trash2, Package, Edit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -65,9 +65,9 @@ export default function Toppings() {
   });
 
   // ✅ Danh mục topping
-  const categories = ["Trân châu", "Bánh", "Thạch", "Kem", "Sữa", "Khác", "Topping"];
-  const units = ["kg", "g", "hộp", "chai", "gói",];
+  const [categories, setCategories] = useState<string[]>([]); const units = ["kg", "g", "hộp", "chai", "gói", "cái"];
   const [recipe, setRecipe] = useState([{ ingredientId: "", quantity: "", unit: "" }]);
+  const [editRecipe, setEditRecipe] = useState<{ ingredientId: string; quantity: string; unit: string }[]>([]);
   const [ingredients, setIngredients] = useState<any[]>([]);
   // 🔹 Danh mục áp dụng cho công thức (theo category của nguyên liệu trong Inventory)
   const [selectedRecipeCategory, setSelectedRecipeCategory] = useState("");
@@ -76,6 +76,9 @@ export default function Toppings() {
   const ingredientCategories = Array.from(
     new Set((ingredients || []).map((i: any) => i.category).filter(Boolean))
   );
+  // Sửa topping
+  const [editTopping, setEditTopping] = useState<Topping | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 
   // Dùng để filter nguyên liệu theo danh mục áp dụng
   const filteredIngredients = selectedRecipeCategory
@@ -109,6 +112,23 @@ export default function Toppings() {
   // =====================
   // 🔹 Lấy danh sách topping
   // =====================
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const token = localStorage.getItem("admin_token");
+        const res = await fetch("http://localhost:3000/api/admin/categories", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.data)) {
+          setCategories(data.data.map((c: any) => c.Name || c.name));
+        }
+      } catch (err) {
+        console.error("❌ Lỗi tải danh mục topping:", err);
+      }
+    };
+    fetchCategories();
+  }, []);
   const fetchToppings = async () => {
     try {
       const token = localStorage.getItem("admin_token");
@@ -176,6 +196,31 @@ export default function Toppings() {
       if (!res.ok) throw new Error("Không thể thêm topping");
       toast.success("✅ Đã thêm topping mới");
       fetchToppings();
+      // 🔹 Lưu công thức topping vào bảng ToppingRecipes
+      try {
+        const toppingRes = await res.json(); // lấy kết quả tạo topping
+        const toppingId = toppingRes.id || toppingRes.insertedId; // tuỳ BE trả về
+
+        for (const row of recipe) {
+          if (!row.ingredientId || !row.quantity) continue;
+          await fetch("http://localhost:3000/api/admin/topping-recipes", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              ToppingId: toppingId,
+              InventoryId: Number(row.ingredientId),
+              QuantityPerTopping: Number(row.quantity),
+            }),
+          });
+        }
+        toast.success("✅ Đã lưu công thức topping!");
+      } catch (err) {
+        console.error("❌ Lỗi lưu công thức topping:", err);
+      }
+
       setIsDialogOpen(false);
       setNewTopping({
         name: "",
@@ -188,6 +233,91 @@ export default function Toppings() {
       });
     } catch {
       toast.error("Không thể thêm topping");
+    }
+  };
+  // =====================
+  // 🔹 Sửa topping
+  // =====================
+  const handleUpdateTopping = async (topping: Topping) => {
+    try {
+      const token = localStorage.getItem("admin_token");
+      if (!token) return toast.error("Chưa đăng nhập");
+
+      // Cập nhật thông tin topping cơ bản
+      const res = await fetch(`http://localhost:3000/api/admin/toppings/${topping.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: topping.name,
+          category: topping.category,
+          price: topping.price,
+          quantity: topping.quantity,
+          unit: topping.unit,
+          supplier: topping.supplier,
+          minStock: topping.minStock,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Không thể cập nhật topping");
+
+      // 🔹 Cập nhật công thức (xóa cũ -> thêm mới)
+      await fetch(`http://localhost:3000/api/admin/topping-recipes/${topping.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      for (const row of editRecipe) {
+        if (!row.ingredientId || !row.quantity) continue;
+        await fetch("http://localhost:3000/api/admin/topping-recipes", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            ToppingId: topping.id,
+            InventoryId: Number(row.ingredientId),
+            QuantityPerTopping: Number(row.quantity),
+          }),
+        });
+      }
+
+      toast.success("✅ Đã cập nhật topping và công thức!");
+      fetchToppings();
+      setIsEditDialogOpen(false);
+    } catch (err) {
+      console.error("❌ Lỗi cập nhật topping:", err);
+      toast.error("Không thể cập nhật topping");
+    }
+  };
+
+  const handleOpenEditDialog = async (topping: Topping) => {
+    try {
+      const token = localStorage.getItem("admin_token");
+      const res = await fetch(`http://localhost:3000/api/admin/topping-recipes/${topping.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+
+      if (data.ok && Array.isArray(data.data)) {
+        setEditRecipe(
+          data.data.map((r: any) => ({
+            ingredientId: r.InventoryId.toString(),
+            quantity: r.QuantityPerTopping.toString(),
+            unit: r.Unit || "",
+          }))
+        );
+      } else {
+        setEditRecipe([]);
+      }
+      setEditTopping(topping);
+      setIsEditDialogOpen(true);
+    } catch (err) {
+      console.error("❌ Lỗi tải công thức topping:", err);
+      setEditRecipe([]);
     }
   };
 
@@ -440,10 +570,10 @@ export default function Toppings() {
                   </div>
 
                   {/* --- CÔNG THỨC PHA CHẾ --- */}
-                  <div className="space-y-4 border-t pt-4">
+                  <div className="space-y-4 border-t pt-4 mt-4">
                     <Label className="text-base font-semibold">Công thức pha chế</Label>
 
-                    {/* Danh mục áp dụng (filter nguyên liệu) */}
+                    {/* Danh mục nguyên liệu áp dụng */}
                     <div className="space-y-2">
                       <Label>Danh mục nguyên liệu áp dụng</Label>
                       <select
@@ -468,8 +598,8 @@ export default function Toppings() {
                       <span></span>
                     </div>
 
-                    {/* Danh sách nguyên liệu */}
-                    {recipe.map((row, index) => (
+                    {/* Danh sách nguyên liệu trong công thức */}
+                    {editRecipe.map((row, index) => (
                       <div
                         key={index}
                         className="grid grid-cols-[2fr_1fr_1fr_50px] gap-4 items-center"
@@ -477,7 +607,11 @@ export default function Toppings() {
                         <select
                           className="w-full border border-input rounded-md p-3 text-sm"
                           value={row.ingredientId}
-                          onChange={(e) => updateIngredient(index, "ingredientId", e.target.value)}
+                          onChange={(e) => {
+                            const updated = [...editRecipe];
+                            updated[index].ingredientId = e.target.value;
+                            setEditRecipe(updated);
+                          }}
                         >
                           <option value="">-- Chọn nguyên liệu --</option>
                           {filteredIngredients.map((ing: any) => (
@@ -490,7 +624,11 @@ export default function Toppings() {
                         <Input
                           type="number"
                           value={row.quantity}
-                          onChange={(e) => updateIngredient(index, "quantity", e.target.value)}
+                          onChange={(e) => {
+                            const updated = [...editRecipe];
+                            updated[index].quantity = e.target.value;
+                            setEditRecipe(updated);
+                          }}
                           placeholder="50"
                           className="p-3 w-full"
                         />
@@ -498,7 +636,11 @@ export default function Toppings() {
                         <select
                           className="w-full border border-input rounded-md p-3 text-sm"
                           value={row.unit}
-                          onChange={(e) => updateIngredient(index, "unit", e.target.value)}
+                          onChange={(e) => {
+                            const updated = [...editRecipe];
+                            updated[index].unit = e.target.value;
+                            setEditRecipe(updated);
+                          }}
                         >
                           <option value="">Chọn</option>
                           <option value="g">gram</option>
@@ -511,7 +653,7 @@ export default function Toppings() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => removeIngredientRow(index)}
+                            onClick={() => setEditRecipe(editRecipe.filter((_, i) => i !== index))}
                             className="hover:bg-red-50"
                           >
                             <Trash2 className="h-5 w-5 text-destructive" />
@@ -523,13 +665,13 @@ export default function Toppings() {
                     <Button
                       variant="outline"
                       className="mt-3 w-full text-sm py-3"
-                      onClick={addIngredientRow}
+                      onClick={() =>
+                        setEditRecipe([...editRecipe, { ingredientId: "", quantity: "", unit: "" }])
+                      }
                     >
                       <Plus className="h-4 w-4 mr-2" /> Thêm nguyên liệu
                     </Button>
                   </div>
-
-
                   {/* --- Footer --- */}
                   <div className="pt-4 border-t">
                     <Button
@@ -542,9 +684,254 @@ export default function Toppings() {
                 </div>
               </DialogContent>
             </Dialog>
+            {/* 🔹 Dialog CHỈNH SỬA TOPPING (ĐẦY ĐỦ CÔNG THỨC) */}
+            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+              <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Chỉnh sửa topping</DialogTitle>
+                  <DialogDescription>
+                    Cập nhật thông tin topping hiện có và công thức pha chế
+                  </DialogDescription>
+                </DialogHeader>
 
+                {editTopping && (
+                  <div className="space-y-4 py-4">
+                    {/* --- Thông tin cơ bản --- */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="editName">Tên topping *</Label>
+                        <Input
+                          id="editName"
+                          value={editTopping.name}
+                          onChange={(e) =>
+                            setEditTopping({ ...editTopping, name: e.target.value })
+                          }
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Danh mục *</Label>
+                        <select
+                          value={editTopping.category}
+                          onChange={(e) =>
+                            setEditTopping({ ...editTopping, category: e.target.value })
+                          }
+                          className="w-full rounded-md border border-input bg-background p-2 text-sm"
+                        >
+                          {categories.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label>Giá (₫ / đơn vị)</Label>
+                        <Input
+                          type="number"
+                          value={editTopping.price}
+                          onChange={(e) =>
+                            setEditTopping({
+                              ...editTopping,
+                              price: parseFloat(e.target.value),
+                            })
+                          }
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Số lượng</Label>
+                        <Input
+                          type="number"
+                          value={editTopping.quantity}
+                          onChange={(e) =>
+                            setEditTopping({
+                              ...editTopping,
+                              quantity: parseFloat(e.target.value),
+                            })
+                          }
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Đơn vị</Label>
+                        <select
+                          value={editTopping.unit}
+                          onChange={(e) =>
+                            setEditTopping({ ...editTopping, unit: e.target.value })
+                          }
+                          className="w-full rounded-md border border-input bg-background p-2 text-sm"
+                        >
+                          {units.map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Nhà cung cấp *</Label>
+                        <Input
+                          value={editTopping.supplier}
+                          onChange={(e) =>
+                            setEditTopping({ ...editTopping, supplier: e.target.value })
+                          }
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Tồn kho tối thiểu</Label>
+                        <Input
+                          type="number"
+                          value={editTopping.minStock}
+                          onChange={(e) =>
+                            setEditTopping({
+                              ...editTopping,
+                              minStock: parseFloat(e.target.value),
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {/* --- CÔNG THỨC PHA CHẾ --- */}
+                    <div className="space-y-4 border-t pt-4 mt-4">
+                      <Label className="text-base font-semibold">Công thức pha chế</Label>
+
+                      {/* Danh mục nguyên liệu áp dụng */}
+                      <div className="space-y-2">
+                        <Label>Danh mục nguyên liệu áp dụng</Label>
+                        <select
+                          value={selectedRecipeCategory}
+                          onChange={(e) => setSelectedRecipeCategory(e.target.value)}
+                          className="w-full rounded-md border border-input bg-background p-3 text-sm"
+                        >
+                          <option value="">-- Chọn danh mục --</option>
+                          {ingredientCategories.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Header bảng công thức */}
+                      <div className="grid grid-cols-4 gap-4 font-semibold text-sm text-muted-foreground px-1">
+                        <span>Nguyên liệu</span>
+                        <span>Số lượng</span>
+                        <span>Đơn vị</span>
+                        <span></span>
+                      </div>
+
+                      {/* Danh sách nguyên liệu trong công thức */}
+                      {editRecipe.length === 0 && (
+                        <p className="text-sm text-muted-foreground italic">
+                          Chưa có công thức nào — thêm nguyên liệu bên dưới
+                        </p>
+                      )}
+
+                      {editRecipe.map((row, index) => (
+                        <div
+                          key={index}
+                          className="grid grid-cols-[2fr_1fr_1fr_50px] gap-4 items-center"
+                        >
+                          <select
+                            className="w-full border border-input rounded-md p-3 text-sm"
+                            value={row.ingredientId}
+                            onChange={(e) => {
+                              const updated = [...editRecipe];
+                              updated[index].ingredientId = e.target.value;
+                              setEditRecipe(updated);
+                            }}
+                          >
+                            <option value="">-- Chọn nguyên liệu --</option>
+                            {filteredIngredients.map((ing: any) => (
+                              <option key={ing.id} value={ing.id}>
+                                {ing.name} ({ing.quantity} {ing.unit})
+                              </option>
+                            ))}
+                          </select>
+
+                          <Input
+                            type="number"
+                            value={row.quantity}
+                            onChange={(e) => {
+                              const updated = [...editRecipe];
+                              updated[index].quantity = e.target.value;
+                              setEditRecipe(updated);
+                            }}
+                            placeholder="50"
+                            className="p-3 w-full"
+                          />
+
+                          <select
+                            className="w-full border border-input rounded-md p-3 text-sm"
+                            value={row.unit}
+                            onChange={(e) => {
+                              const updated = [...editRecipe];
+                              updated[index].unit = e.target.value;
+                              setEditRecipe(updated);
+                            }}
+                          >
+                            <option value="">Chọn</option>
+                            <option value="g">gram</option>
+                            <option value="ml">ml</option>
+                            <option value="kg">kg</option>
+                            <option value="lít">lít</option>
+                          </select>
+
+                          <div className="flex justify-center">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() =>
+                                setEditRecipe(editRecipe.filter((_, i) => i !== index))
+                              }
+                              className="hover:bg-red-50"
+                            >
+                              <Trash2 className="h-5 w-5 text-destructive" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+
+                      <Button
+                        variant="outline"
+                        className="mt-3 w-full text-sm py-3"
+                        onClick={() =>
+                          setEditRecipe([
+                            ...editRecipe,
+                            { ingredientId: "", quantity: "", unit: "" },
+                          ])
+                        }
+                      >
+                        <Plus className="h-4 w-4 mr-2" /> Thêm nguyên liệu
+                      </Button>
+                    </div>
+
+                    {/* --- Footer --- */}
+                    <DialogFooter className="pt-4 border-t">
+                      <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                        Hủy
+                      </Button>
+                      <Button
+                        onClick={() => handleUpdateTopping(editTopping)}
+                        className="bg-primary text-primary-foreground"
+                      >
+                        Lưu thay đổi
+                      </Button>
+                    </DialogFooter>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </div>
-
           {/* 🔸 Bảng hiển thị */}
           <div className="border rounded-lg">
             <Table>
@@ -584,7 +971,18 @@ export default function Toppings() {
                       <TableCell className="text-muted-foreground">
                         {t.lastUpdated}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right space-x-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            handleOpenEditDialog(t);
+                            setIsEditDialogOpen(true);
+                          }}
+                        >
+                          <Edit className="h-4 w-4 text-blue-600" />
+                        </Button>
+
                         <Button
                           variant="ghost"
                           size="icon"
@@ -593,6 +991,7 @@ export default function Toppings() {
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </TableCell>
+
                     </TableRow>
                   ))
                 )}

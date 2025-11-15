@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { apiCall } from "@/lib/api";
 
 interface Order {
   id: string;
@@ -32,73 +33,122 @@ const statusConfig = {
 };
 
 export default function Orders() {
+  const [orders, setOrders] = useState<Order[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [orders, setOrders] = useState<Order[]>([
-    {
-      id: "#PL1234",
-      customer: "Nguyễn Văn A",
-      phone: "0912345678",
-      products: "Trà sữa matcha (x2), Cà phê đen đá (x1)",
-      total: 195000,
-      status: "completed",
-      date: "2025-01-10 14:30",
-    },
-    {
-      id: "#PL1235",
-      customer: "Trần Thị B",
-      phone: "0923456789",
-      products: "Trà đào cam sả (x1)",
-      total: 65000,
-      status: "processing",
-      date: "2025-01-10 15:45",
-    },
-    {
-      id: "#PL1236",
-      customer: "Lê Văn C",
-      phone: "0934567890",
-      products: "Cà phê sữa (x3), Trà sữa matcha (x1)",
-      total: 240000,
-      status: "shipping",
-      date: "2025-01-10 16:20",
-    },
-    {
-      id: "#PL1237",
-      customer: "Phạm Thị D",
-      phone: "0945678901",
-      products: "Trà sữa matcha (x1)",
-      total: 75000,
-      status: "pending",
-      date: "2025-01-10 17:00",
-    },
-  ]);
+
+  const fetchOrders = async () => {
+
+    try {
+      const res = await apiCall("/admin/orders", {
+        method: "GET",
+        headers: {},
+      });
+
+      console.log("📦 Dữ liệu trả về:", res);
+      console.log("🔬 Mẫu dữ liệu đơn hàng:", res.data[0]);
+
+      // 🛠 Nếu không có data, tránh crash
+      if (!res || !Array.isArray(res.data)) {
+        toast.error("Không thể tải đơn hàng");
+        console.error("❌ Dữ liệu đơn hàng không hợp lệ:", res);
+        return;
+      }
+
+      const mapped: Order[] = res.data.map((o: any) => {
+        console.log(`🔍 Dòng đơn hàng: ${o.Id} →`, o.ProductList || o.productList || o.productlist);
+        return {
+          id: o.Id || o.id,
+          customer: o.CustomerName || o.user?.name || "Ẩn danh",
+          phone: o.Phone || o.user?.phone || "",
+          products: o.ProductList && typeof o.ProductList === "string" && o.ProductList.trim()
+            ? o.ProductList
+            : "(không có dữ liệu)",
+          total: o.Total || o.total || 0,
+          status: ((o.Status || o.status || "pending") as string).toLowerCase() as Order["status"],
+          date: o.CreatedAt
+            ? new Date(o.CreatedAt).toLocaleString("vi-VN")
+            : new Date().toLocaleString("vi-VN"),
+        };
+      });
+
+      setOrders(mapped);
+      console.log("📦 setOrders gọi xong, orders mới:", mapped);
+    } catch (err) {
+      toast.error("Lỗi khi tải đơn hàng");
+      console.error("❌ fetchOrders error:", err);
+    }
+  };
+
+
+
+  useEffect(() => {
+    fetchOrders();
+  }, []);
+
+  const updateOrderStatus = async (orderId: string, newStatus: Order["status"]) => {
+    try {
+      console.log("🔄 Đang cập nhật đơn:", orderId, "→", newStatus);
+
+      const res = await apiCall(`/admin/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: {},
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      console.log("📬 Phản hồi từ server:", res);
+
+      if (res && res.message?.includes("Đơn hàng")) {
+        setOrders((prev) =>
+          prev.map((order) =>
+            order.id === orderId ? { ...order, status: newStatus } : order
+          )
+        );
+        console.log("✅ Đã cập nhật trạng thái trong FE");
+        toast.success("✅ Trạng thái đã được cập nhật");
+      } else {
+        toast.error("Cập nhật trạng thái thất bại");
+      }
+    } catch (err) {
+      toast.error("Lỗi khi cập nhật trạng thái");
+      console.error("❌ updateOrderStatus error:", err);
+    }
+  };
+
+
+  const cancelOrder = async (orderId: string) => {
+    if (!window.confirm("Bạn có chắc muốn hủy đơn hàng này không?")) return;
+    try {
+      const res = await apiCall(`/admin/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: {},
+        body: JSON.stringify({ status: "cancelled" }),
+      });
+
+      if (res && res.message?.includes("Đơn hàng")) {
+        setOrders((prev) =>
+          prev.map((order) =>
+            order.id === orderId ? { ...order, status: "cancelled" } : order
+          )
+        );
+        toast.error("🛑 Đơn hàng đã được hủy");
+      } else {
+        toast.error("Không thể hủy đơn hàng");
+      }
+    } catch (err) {
+      toast.error("Lỗi khi hủy đơn hàng");
+      console.error(err);
+    }
+  };
 
   const filteredOrders = orders.filter((order) => {
     const matchesSearch =
-      order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      order.id.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
       order.customer.toLowerCase().includes(searchQuery.toLowerCase());
+
     const matchesStatus = statusFilter === "all" || order.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const updateOrderStatus = (orderId: string, newStatus: Order["status"]) => {
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id === orderId ? { ...order, status: newStatus } : order
-      )
-    );
-    toast.success("✅ Đã cập nhật trạng thái đơn hàng");
-  };
-
-  const cancelOrder = (orderId: string) => {
-    if (!window.confirm("Bạn có chắc muốn hủy đơn hàng này không?")) return;
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id === orderId ? { ...order, status: "cancelled" } : order
-      )
-    );
-    toast.error("🛑 Đơn hàng đã được hủy");
-  };
 
   return (
     <div className="space-y-6">
@@ -152,7 +202,13 @@ export default function Orders() {
             </thead>
             <tbody>
               {filteredOrders.map((order) => {
-                const StatusIcon = statusConfig[order.status].icon;
+                const statusObj = statusConfig[order.status] || {
+                  label: "Không rõ",
+                  color: "bg-muted text-muted-foreground",
+                  icon: XCircle,
+                };
+                const StatusIcon = statusObj.icon;
+
                 return (
                   <tr
                     key={order.id}
@@ -171,10 +227,11 @@ export default function Orders() {
                     </td>
                     <td className="py-4 px-6 text-sm text-muted-foreground">{order.date}</td>
                     <td className="py-4 px-6">
-                      <Badge className={statusConfig[order.status].color}>
+                      <Badge className={statusObj.color}>
                         <StatusIcon className="w-3 h-3 mr-1" />
-                        {statusConfig[order.status].label}
+                        {statusObj.label}
                       </Badge>
+
                     </td>
                     <td className="py-4 px-6">
                       <div className="flex gap-2">
@@ -200,7 +257,6 @@ export default function Orders() {
                           </SelectContent>
                         </Select>
 
-                        {/* Nút hủy đơn */}
                         {order.status !== "cancelled" && order.status !== "completed" && (
                           <Button
                             variant="outline"

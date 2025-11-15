@@ -75,10 +75,17 @@ export const apiCall = async (
 
     // Xử lý lỗi khác
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      console.error("❌ API Error Response:", error);
-      throw new Error(error.error || error.message || "API call failed");
+      const errorText = await response.text().catch(() => "");
+      console.log("🛠️ Debug API Fail:");
+      console.log("⛔ Endpoint:", endpoint);
+      console.log("📤 Method:", config.method);
+      console.log("📬 Headers:", config.headers);
+      console.log("📦 Body:", config.body);
+      console.log("❌ Status:", response.status);
+      console.log("📃 Raw Response:", errorText);
+      throw new Error("API call failed");
     }
+
 
     return await response.json();
   } catch (error) {
